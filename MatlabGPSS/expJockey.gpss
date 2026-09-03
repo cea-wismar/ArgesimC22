@@ -1,0 +1,82 @@
+% expJockey: four jockeying queues with servers
+%   custXacts enter one of four standard queues + servers
+%   one opXact checks for jockeying and sends the last of a queue
+%       to a shorter one
+%
+% Xact parameters
+%   P1  id
+%   P2  queue entering time
+%   P3  index of queue/server
+%   P4  total queue waiting time
+% start with
+%  prepare('expJockey.gpss'), schedule(500,0)
+
+% queues and facilities are referenced by index 1:nQ in P(3)
+% chains: chC (index 1:nQ) for each queue, chO (index nQ+1) for opX
+
+init
+  nQ = 4;                           % number of queues
+  tA = 1;                           % arriving time
+  tS = 4.5;                         % service time
+  dtS = 2;                          % width of service time distribution
+  nE = 500;                         % number of Xacts
+  id = 1;                           % index of initial Xact
+  allXacts = [];                    % exit time and index per served Xact
+  jocXacts = [];                    % time and index per jockeying Xact
+  qWaits = [];                      % exit and waiting time per Xact
+  qLens = num2cell(zeros(nQ,2),2)'; % queue lengths over time
+
+model
+   %
+   % opX
+   %
+   generate(0,0,0,1,1)              % operator with prio=1
+   
+o1 link(nQ+1,2,0)                   % wait in chO for unlink
+
+o2 buffer()    % wait for Xacts in queues, unnecessary - PRIO!
+   [src, dest] = doJockeying(Q(1:nQ) + F(1:nQ));   % check for jockeying
+   if src ~= 0, unlink(src,o4,1,1,0,0), end
+   transfer(o1)
+
+   %   
+   % custX
+   %
+   generate(expod(1,tA),0,1,nE,0)    % custX generation with lowest prio
+   P(1, id);                         % entities have id
+   id = id + 1;
+   P(4, 0);                          % total queue waiting time
+   [~, nr] = min(Q(1:nQ) + F(1:nQ)); % find shortest queue (incl server)
+   P(3, nr);                         % store index of queue and server
+
+o5 queue(P(3),1)
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(2, T);                          % store queue enter time
+   priority(2)                       % now custX have highest prio
+   if F(P(3)) < 1, transfer(o3), end % server empty -> skip chain
+   link(P(3),2,0)                    % wait for unlink
+
+o3 seize(P(3))
+   depart(P(3),1)
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(4, T - P(2) + P(4));           % accumulate queue waiting time
+   advance(triangd(2,tS-dtS,tS,tS+dtS),0)
+   release(P(3))          
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   unlink(P(3),o3,1,0,0,0)         % wake next custX
+   unlink(nQ+1,o2,1,0,0,0)         % wake opX
+
+   allXacts = [allXacts; [T, P(1)]]; % save Xact's id
+   qWaits = [qWaits; [T, P(4)]];
+   terminate(1)
+
+o4 jocXacts = [jocXacts; [T, P(1), P(3), dest]];
+   depart(P(3),1)
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(4, T - P(2) + P(4));           % accumulate queue waiting time
+   P(3, dest);
+   transfer(o5)
+
+final
+  plotStatBench(qLens, allXacts, qWaits, 4, jocXacts)
+  %plotStatistics(qLens, allXacts, qWaits, 4, jocXacts)

@@ -1,0 +1,46 @@
+% choose shortest of four queues (incl. server)
+% order B (generator before server/queue)
+% Xact parameters
+%   P1  id
+%   P2  queue waiting time
+%   P3  index of queue/server
+% start with
+%  prepare('fixFifoB.gpss'), schedule(100,0)
+
+% queues and facilities are referenced by index in P(3)
+
+init
+  nQ = 4;                           % number of queues
+  tA = 1;                           % arriving time
+  tS = 4.5;                         % service time
+  nE = 100;                         % number of Xacts
+  id = 1;                           % index of initial Xact
+  allXacts = [];                    % exit time and index per Xact
+  qWaits = [];                      % exit and waiting time per Xact
+  qLens = num2cell(zeros(nQ,2),2)'; % queue lengths over time
+
+model
+  generate(tA,0,1,nE,1)
+  P(1, id);                         % entities have id
+  id = id + 1;
+  [~, nr] = min(Q(1:nQ) + F(1:nQ)); % find shortest queue (incl server)
+  P(3, nr);                         % store index of queue and server
+    
+  queue(P(3),1)                                
+  qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+  P(2, T);                          % store queue enter time
+  seize(P(3))
+  depart(P(3),1)
+  qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+  P(2, T - P(2));                   % store queue waiting time
+  priority(0)
+  advance(tS,0)
+  release(P(3))
+
+  allXacts = [allXacts; [T, P(1)]]; % save Xact's id
+  qWaits = [qWaits; [T, P(2)]];
+  terminate(1)
+
+final
+  plotStatBench(qLens, allXacts, qWaits)
+  %plotStatistics(qLens, allXacts, qWaits)

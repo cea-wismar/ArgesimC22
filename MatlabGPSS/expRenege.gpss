@@ -1,0 +1,66 @@
+% four renege queues with server
+% method B: clone Xacts and destroy doubles, after they left or reneged
+% Xact parameters
+%   P1  id
+%   P2  queue waiting time
+%   P4  index of queue/server
+% start with
+%  prepare('expRenege.gpss'), schedule(1000,0)
+
+% queues, facilities and chains are referenced by index 1:nQ in P(4)
+
+init	
+  nQ = 4;                           % number of queues
+  tA = 1;                           % arriving time
+  tS = 4.5;                         % mean service time
+  dtS = 2;                          % width of service time distribution
+  tR = 9.0;                         % max waiting time before reneging
+  nE = 500;                         % number of Xacts
+  id = 1;                           % index of initial Xact
+  srvXacts = [];                    % exit time and index per served Xact
+  renXacts = [];                    % exit time and index per reneging Xact
+  qWaits = [];                      % exit and waiting time per Xact
+  qLens = num2cell(zeros(nQ,2),2)'; % queue lengths over time
+  idSeen = zeros(2*nE,1);           % = 1 when one of a clone pair has left
+
+model
+   generate(expod(1,tA),0,1,nE,0)
+   P(1, id);              % entities have id
+   id = id + 1;
+   [~, nr] = min(Q(1:nQ) + F(1:nQ));  % find shortest queue (incl server)
+   P(4, nr);              % store index of queue and server
+
+   queue(P(4), 1)
+   split(1,o1,0)
+   priority(2)            % leaving queue before reneging
+   qLens{P(4)} = [qLens{P(4)}; [T, Q(P(4))]];
+   P(2, T);               % store queue enter time for statistics
+
+   gate_fnu(P(4), 0)
+   if idSeen(P(1)) == 1, transfer(o2), end
+   seize(P(4))
+   idSeen(P(1)) = 1;
+   depart(P(4), 1)
+   qLens{P(4)} = [qLens{P(4)}; [T, Q(P(4))]];
+   P(2, T - P(2));        % store queue waiting time
+   advance(triangd(2,tS-dtS,tS,tS+dtS), 0)
+   release(P(4))
+   srvXacts = [srvXacts; [T, P(1)]];  % save Xact's id
+   qWaits = [qWaits; [T, P(2)]];
+o2 terminate(1)
+
+% reneging section
+o1 priority(1)            %  reneging before entry of new Xacts
+   advance(tR,0)
+   if idSeen(P(1)) == 1, transfer(o3), end
+   idSeen(P(1)) = 1;
+   depart(P(4), 1)
+   qLens{P(4)} = [qLens{P(4)}; [T, Q(P(4))]];
+   P(2, tR);              % store queue waiting time
+   qWaits = [qWaits; [T, P(2)]];
+   renXacts = [renXacts; [T, P(1)]];  % save Xact's id
+o3 terminate(1)
+
+final
+  plotStatBench(qLens, srvXacts, qWaits, 2, renXacts)
+  %plotStatistics(qLens, srvXacts, qWaits, 2, renXacts)

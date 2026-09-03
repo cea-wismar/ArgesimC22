@@ -1,0 +1,94 @@
+% four classing queues with server, stochastic
+%   ankommende custXs mit KlassenId betreten chain c1
+%   Operator opX ruft nach einer Initial-Wartezeit eine Klasse auf
+%   custX dieser Klasse gehen weiter nach c2 und werden bedient
+%   Server leer -> opX aktiviert nächste Klasse (round-robin)
+%   keine custX warten -> opX wartet
+%
+% Xact parameters
+%   P1  id
+%   P2  queue waiting time
+%   P3  classing id  
+%   P4  index of queue/server
+% start with
+%  prepare('expClass.gpss'), schedule(500,0)
+
+% queues and facilities are referenced by P4 (1:nQ)
+% chains: c1 by P4 (1:nQ), c2 by P4+nQ ((nQ+1):(2*nQ))
+%         cO (index 2*nQ+1) for opX
+
+logicals        lW                  % opX wait at empty queue
+
+init
+  nQ = 4;                           % number of queues
+  tA = 1;                           % arriving time
+  tS = 4.5;                         % service time
+  dtS = 2;                          % width of service time distribution
+  tC = 10;                          % initial calling time of opX
+  nE = 500;                         % number of Xacts
+  nC = 5;                           % number of classes
+  id = 1;                           % index of initial Xact
+  
+  srvXacts = [];                    % exit time and index per served Xact
+  opXacts = [];                     % time and class of operator action
+  qWaits = [];                      % exit and waiting time per Xact
+  qLens = num2cell(zeros(nQ,2),2)'; % queue lengths over time
+
+model
+   % OPERATOR
+   % *********
+   generate(0,0,0,1,0)              % opX has lowest prio
+   crtclass = 1;                    % initial for round-robin class counter 
+   advance(tC,0)
+o1 if sum(CH(1:nQ)) < 1, logic_r(lW), end  % no waiting custXs
+   gate_ls(lW,0)                    % pass if waiting custXs 
+       
+   crtclass = crtclass-1;           % set class (start with highest one)
+   if crtclass < 1, crtclass = nC; end   % round robin
+   opXacts = [opXacts; [T, crtclass, 1]]; 
+
+   for q=1:nQ, unlink(q,o3,-1,0,0,0), end
+   buffer()                         % opX after unlinked Xacts in CEC
+   if sum(CH((nQ+1):(2*nQ)) + F(1:nQ)) < 1, transfer(o1), end
+   link(2*nQ+1,2,0)              % wait till crt class Xacts are finished
+           
+
+   % COSTUMERS
+   % **********
+   generate(expod(1,tA),0,1,nE,1)   % costumers: higher prio than op
+   P(1, id);                        % set id
+   P(3, duniformd(3,1,nC));         % set class uniformly distributed
+   id = id + 1;
+   [~, nr] = min(Q(1:nQ) + F(1:nQ)); % find shortest queue (incl. server)
+   P(4, nr);                         % store index of queue and server
+
+   P(2, T);                         % store queue enter time for statistics
+   logic_s(lW)                      % signal to opX
+   priority(3)                 % highest prio for server release and entry
+   queue(P(4),1)                      
+   qLens{P(4)} = [qLens{P(4)}; [T, Q(P(4))]];
+
+o2 link(P(4),2,0)
+
+o3 if P(3)~=crtclass, transfer(o2), end     % requeue, if wrong class
+   if F(P(4)) < 1, transfer(o4), end        % server empty -> skip chain
+   link(P(4)+nQ,2,0)
+
+o4 seize(P(4))                              % Xact is served    
+   depart(P(4),1)
+   qLens{P(4)} = [qLens{P(4)}; [T, Q(P(4))]];
+   P(2, T - P(2));             % store queue waiting time                                         
+   advance(triangd(2,tS-dtS,tS,tS+dtS),0)
+   release(P(4))          
+   unlink(P(4)+nQ,o4,1,0,0,0)       % get next custX from c2
+   priority(2)                      % precede arriving Xacts 
+   if CH((nQ+1):(2*nQ))+F(1:nQ) < 1, unlink(2*nQ+1,o1,0,0,0,0), end 
+                                                  % opX calls next class 
+   
+   srvXacts = [srvXacts; [T, P(1), P(3), 1]];
+   qWaits = [qWaits; [T, P(2)]];
+   terminate(1)
+
+final
+  plotStatBench(qLens, srvXacts, qWaits, 3, opXacts)
+  %plotStatistics(qLens, srvXacts, qWaits, 3, opXacts)

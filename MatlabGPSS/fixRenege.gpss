@@ -1,0 +1,65 @@
+% four renege queues with server
+% method B: clone Xacts and destroy doubles, after they left or reneged
+% Xact parameters
+%   P1  id
+%   P2  queue waiting time
+%   P3  index of queue/server
+% start with
+%  prepare('fixRenege.gpss'), schedule(200,0)
+
+% queues, facilities and chains are referenced by index 1:nQ in P(3)
+
+init	
+  nQ = 4;                           % number of queues
+  tA = 1;                           % arriving time
+  tS = 4.5;                         % service time
+  tR = 9.0;                         % max waiting time before reneging
+  nE = 100;                         % number of Xacts
+  id = 1;                           % index of initial Xact
+  srvXacts = [];                    % exit time and index per served Xact
+  renXacts = [];                    % exit time and index per reneging Xact
+  qWaits = [];                      % exit and waiting time per Xact
+  qLens = num2cell(zeros(nQ,2),2)'; % queue lengths over time
+  idSeen = zeros(2*nE,1);           % = 1 when one of a clone pair has left
+
+model
+   generate(tA,0,1,nE,0)
+   P(1, id);              % entities have id
+   id = id + 1;
+   [~, nr] = min(Q(1:nQ) + F(1:nQ));  % find shortest queue (incl server)
+   P(3, nr);              % store index of queue and server
+
+   queue(P(3), 1)
+   split(1,o1,0)
+   priority(2)            % leaving queue before reneging
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(2, T);               % store queue enter time for statistics
+
+   gate_fnu(P(3), 0)
+   if idSeen(P(1)) == 1, transfer(o2), end
+   seize(P(3))
+   idSeen(P(1)) = 1;
+   depart(P(3), 1)
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(2, T - P(2));        % store queue waiting time
+   advance(tS, 0)
+   release(P(3))
+   srvXacts = [srvXacts; [T, P(1)]];  % save Xact's id
+   qWaits = [qWaits; [T, P(2)]];
+o2 terminate(1)
+
+% reneging section
+o1 priority(1)            %  reneging before entry of new Xacts
+   advance(tR,0)
+   if idSeen(P(1)) == 1, transfer(o3), end
+   idSeen(P(1)) = 1;
+   depart(P(3), 1)
+   qLens{P(3)} = [qLens{P(3)}; [T, Q(P(3))]];
+   P(2, tR);              % store queue waiting time
+   qWaits = [qWaits; [T, P(2)]];
+   renXacts = [renXacts; [T, P(1)]];  % save Xact's id
+o3 terminate(1)
+
+final
+  plotStatBench(qLens, srvXacts, qWaits, 2, renXacts, 21)
+  %plotStatistics(qLens, srvXacts, qWaits, 2, renXacts)
